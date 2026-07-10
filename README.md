@@ -1,6 +1,6 @@
 # grobid-llm-benchmark
 
-Reusable harness to benchmark **multimodal LLMs against GROBID** for structured data
+AI-generated, reusable harness to benchmark **multimodal LLMs against GROBID** for structured data
 extraction from scholarly PDFs, addressing
 [grobidOrg/grobid#1146](https://github.com/grobidOrg/grobid/issues/1146).
 
