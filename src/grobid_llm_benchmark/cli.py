@@ -121,6 +121,9 @@ def run(
     table.add_row("articles", str(summary.n_articles))
     table.add_row("ok", str(summary.n_ok))
     table.add_row("failed", str(summary.n_failed))
+    n_truncated = sum(1 for r in summary.results if r.truncated)
+    if n_truncated:
+        table.add_row("truncated (refs may be cut)", str(n_truncated))
     table.add_row("total seconds", f"{summary.total_seconds:.1f}")
     if summary.n_ok:
         avg = summary.total_seconds / max(summary.n_ok, 1)

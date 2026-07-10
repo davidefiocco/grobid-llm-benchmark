@@ -6,8 +6,9 @@ XPath fields and matching modes:
 - ``jatsEval  -Prun=0``  scores GROBID's ``*.fulltext.tei.xml`` (baseline).
 - ``jatsEvalLLM``        scores the LLM's ``*.fulltext.llm.tei.xml``.
 
-Both write ``grobid-home/tmp/report.md``; we copy it to a caller-chosen path so the two
-runs do not overwrite each other.
+Both write the same ``grobid-home/tmp/report.md``, which we copy to a caller-chosen path.
+Scoring must therefore run serially (the benchmark pipeline does): concurrent invocations
+would race on that shared file before it is copied.
 """
 
 from __future__ import annotations

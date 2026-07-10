@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 
 from grobid_llm_benchmark.backends.base import BackendConfig, LLMBackend
-from grobid_llm_benchmark.json_utils import coerce_json
+from grobid_llm_benchmark.json_utils import coerce_json_ex
 from grobid_llm_benchmark.models import EXTRACTION_JSON_HINT, EXTRACTION_TASK, Extraction
 from grobid_llm_benchmark.pdf import extract_text, render_pages_to_base64
 
@@ -108,8 +108,11 @@ class ApiBackend(LLMBackend):
             max_tokens=cfg.num_predict or None,
             response_format={"type": "json_object"},
         )
+        self.last_truncated = getattr(response.choices[0], "finish_reason", None) == "length"
         content = response.choices[0].message.content or ""
         try:
             return Extraction.model_validate_json(content)
         except Exception:
-            return Extraction.model_validate(coerce_json(content))
+            obj, repaired = coerce_json_ex(content)
+            self.last_truncated = self.last_truncated or repaired
+            return Extraction.model_validate(obj)

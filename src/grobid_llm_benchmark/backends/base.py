@@ -16,8 +16,12 @@ from grobid_llm_benchmark.models import Extraction
 
 @dataclass
 class BackendConfig:
+    """Shared backend configuration. Defaults mirror the ``glb run`` CLI so constructing
+    ``BackendConfig`` directly (tests, scripts) matches the benchmark configuration."""
+
     model: str
-    max_pages: int = 6
+    # 0 => send every page (whole-document coverage), matching the CLI default
+    max_pages: int = 0
     dpi: int = 150
     # feed the PDF text layer alongside images (helps with references)
     include_text: bool = True
@@ -29,7 +33,7 @@ class BackendConfig:
     # context window (Ollama only); 0 => server default
     num_ctx: int = 8192
     # cap generated tokens (reference lists can be long, but avoid runaway generation)
-    num_predict: int = 4096
+    num_predict: int = 5000
 
 
 class LLMBackend(abc.ABC):
@@ -37,6 +41,9 @@ class LLMBackend(abc.ABC):
 
     def __init__(self, config: BackendConfig):
         self.config = config
+        # Set by extract() when the JSON response had to be repaired from a truncated
+        # (token-capped) generation, so the runner can flag a possibly-cut reference list.
+        self.last_truncated = False
 
     @property
     @abc.abstractmethod

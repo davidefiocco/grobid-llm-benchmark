@@ -3,7 +3,7 @@ name = "grobid-llm-benchmark"
 version = "0.1.0"
 description = "Benchmark harness comparing multimodal LLMs against GROBID for scholarly PDF extraction (GROBID issue #1146)"
 authors = ["Davide Fiocco <davidefiocco@users.noreply.github.com>"]
-license = "MIT"
+license = "Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/davidefiocco/grobid-llm-benchmark"
 packages = [{ include = "grobid_llm_benchmark", from = "src" }]

@@ -309,7 +309,7 @@ poetry run pytest -m docker      # compose lint + crf-lite service boot (needs d
 
 ## Licensing & attribution
 
-MIT-licensed (see [`LICENSE`](LICENSE)). GROBID and biblio-glutton are Apache-2.0 and aren't
-vendored here — they're fetched/built at image time. The one GROBID-derived file,
-[`deploy/patches/llm-eval.patch`](deploy/patches/llm-eval.patch), stays Apache-2.0; see
-[`NOTICE`](NOTICE) for details.
+Apache-2.0-licensed (see [`LICENSE`](LICENSE)), matching GROBID and biblio-glutton, which
+are Apache-2.0 and aren't vendored here — they're fetched/built at image time. The one
+GROBID-derived file, [`deploy/patches/llm-eval.patch`](deploy/patches/llm-eval.patch), is
+Apache-2.0 as well; see [`NOTICE`](NOTICE) for details.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import warnings
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -57,8 +58,10 @@ def render_pages_to_base64(
 
 
 def find_pdf(article_dir: Path) -> Path | None:
-    """Return the single PDF in an article directory, if any."""
-    pdfs = [p for p in Path(article_dir).iterdir() if p.suffix.lower() == ".pdf"]
+    """Return the (deterministically first) PDF in an article directory, if any."""
+    pdfs = sorted(p for p in Path(article_dir).iterdir() if p.suffix.lower() == ".pdf")
+    if len(pdfs) > 1:
+        warnings.warn(f"{article_dir} has {len(pdfs)} PDFs; using {pdfs[0].name}", stacklevel=2)
     return pdfs[0] if pdfs else None
 
 
