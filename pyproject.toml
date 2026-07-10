@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "grobid-llm-benchmark"
-version = "0.1.0"
+version = "0.1.1"
 description = "Benchmark harness comparing multimodal LLMs against GROBID for scholarly PDF extraction (GROBID issue #1146)"
 authors = ["Davide Fiocco <davidefiocco@users.noreply.github.com>"]
 license = "Apache-2.0"
