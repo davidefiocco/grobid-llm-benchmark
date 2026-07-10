@@ -11,6 +11,25 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+# Surname particles kept attached to the surname, and generational suffixes, when a backend
+# hands us a single name string to split (see Author.from_full_name).
+_NAME_PARTICLES = {
+    "van",
+    "von",
+    "der",
+    "den",
+    "de",
+    "del",
+    "della",
+    "di",
+    "da",
+    "dos",
+    "la",
+    "le",
+    "el",
+}
+_NAME_SUFFIXES = {"jr", "sr", "ii", "iii", "iv"}
+
 
 class Author(BaseModel):
     forename: str = ""
@@ -18,12 +37,31 @@ class Author(BaseModel):
 
     @classmethod
     def from_full_name(cls, name: str) -> "Author":
-        parts = name.strip().split()
-        if not parts:
+        """Best-effort split of a single name string into forename/surname.
+
+        Only a fallback: backends are asked to return forename/surname directly. Handles the
+        comma form ("Surname, Forename"), keeps common surname particles ("van der", "de",
+        "dos") attached to the surname, and treats trailing generational suffixes ("Jr", "III")
+        as part of the surname so the evaluation's surname match is not broken.
+        """
+        name = name.strip()
+        if not name:
             return cls()
+        if "," in name:
+            surname, _, forename = name.partition(",")
+            return cls(forename=forename.strip(), surname=surname.strip())
+        parts = name.split()
         if len(parts) == 1:
             return cls(surname=parts[0])
-        return cls(forename=" ".join(parts[:-1]), surname=parts[-1])
+        suffix = ""
+        if parts[-1].rstrip(".").lower() in _NAME_SUFFIXES and len(parts) > 2:
+            suffix = " " + parts.pop()
+        cut = len(parts) - 1
+        while cut > 0 and parts[cut - 1].lower() in _NAME_PARTICLES:
+            cut -= 1
+        # cut == 0 means the name is entirely particles + surname (no forename), e.g.
+        # "van der Waals" -> surname only.
+        return cls(forename=" ".join(parts[:cut]), surname=" ".join(parts[cut:]) + suffix)
 
 
 class Reference(BaseModel):

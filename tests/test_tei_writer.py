@@ -94,6 +94,27 @@ def test_fulltext_fields_resolve():
     assert got["reference_table"] == ["Table 1"]
 
 
+def test_page_range_normalized_to_first_page():
+    ext = Extraction(references=[Reference(title="R", first_page="123-145")])
+    root = build_tei(ext).getroot()
+    bibl = root.xpath(_teiify(S.CITATION_BASE_GROBID_XPATH), namespaces=NS)[0]
+    assert bibl.xpath(_teiify(S.CITATION_FIELDS_GROBID_XPATH["page"]), namespaces=NS) == ["123"]
+
+
+def test_figure_table_captions_reduced_to_label():
+    ext = Extraction(
+        body=Body(
+            figure_titles=["Figure 2. A long descriptive caption that is not a label."],
+            table_titles=["Table 3: summary of results"],
+        )
+    )
+    root = build_tei(ext).getroot()
+    got_fig = root.xpath(_teiify(S.FULLTEXT_FIELDS_GROBID_XPATH["figure_title"]), namespaces=NS)
+    got_tab = root.xpath(_teiify(S.FULLTEXT_FIELDS_GROBID_XPATH["table_title"]), namespaces=NS)
+    assert got_fig == ["Figure 2"]
+    assert got_tab == ["Table 3"]
+
+
 def test_citation_fields_resolve():
     root = build_tei(_sample()).getroot()
     bibls = root.xpath(_teiify(S.CITATION_BASE_GROBID_XPATH), namespaces=NS)

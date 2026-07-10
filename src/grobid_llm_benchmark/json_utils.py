@@ -90,24 +90,31 @@ def _repair_truncated_json(text: str) -> dict | None:
 
 def coerce_json(text: str) -> dict:
     """Parse a JSON object out of a model response, tolerating fences/prose/truncation."""
+    obj, _ = coerce_json_ex(text)
+    return obj
+
+
+def coerce_json_ex(text: str) -> tuple[dict, bool]:
+    """Like :func:`coerce_json`, but also return whether the object had to be *repaired*
+    from a truncated response (a signal that the reference list may be cut short)."""
     text = text.strip()
     try:
-        return json.loads(text)
+        return json.loads(text), False
     except json.JSONDecodeError:
         pass
     fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
     if fenced:
         try:
-            return json.loads(fenced.group(1))
+            return json.loads(fenced.group(1)), False
         except json.JSONDecodeError:
             pass
     brace = re.search(r"\{.*\}", text, re.DOTALL)
     if brace:
         try:
-            return json.loads(brace.group(0))
+            return json.loads(brace.group(0)), False
         except json.JSONDecodeError:
             pass
     repaired = _repair_truncated_json(text)
     if repaired is not None:
-        return repaired
+        return repaired, True
     raise ValueError("No JSON object found in model response")

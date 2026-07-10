@@ -31,6 +31,8 @@ class ArticleResult:
     tei_path: str | None = None
     n_references: int = 0
     n_consolidated: int = 0
+    # True when the response was token-capped/repaired, so the reference list may be cut short.
+    truncated: bool = False
     error: str | None = None
 
 
@@ -100,6 +102,7 @@ def run_extraction(
         start = time.time()
         try:
             extraction = backend.extract(pdf)
+            truncated = getattr(backend, "last_truncated", False)
             n_consolidated = 0
             if glutton is not None:
                 cons = consolidate_extraction(
@@ -120,6 +123,7 @@ def run_extraction(
                     tei_path=str(tei_path),
                     n_references=len(extraction.references),
                     n_consolidated=n_consolidated,
+                    truncated=truncated,
                 )
             )
             if progress:

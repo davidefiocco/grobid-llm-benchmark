@@ -12,7 +12,7 @@ from pathlib import Path
 import ollama
 
 from grobid_llm_benchmark.backends.base import LLMBackend
-from grobid_llm_benchmark.json_utils import coerce_json
+from grobid_llm_benchmark.json_utils import coerce_json_ex
 from grobid_llm_benchmark.models import EXTRACTION_JSON_HINT, EXTRACTION_TASK, Extraction
 from grobid_llm_benchmark.pdf import extract_text, render_pages_to_png
 
@@ -65,8 +65,11 @@ class OllamaBackend(LLMBackend):
             format=Extraction.model_json_schema(),
             options=options,
         )
+        self.last_truncated = response.get("done_reason") == "length"
         content = response["message"]["content"]
         try:
             return Extraction.model_validate_json(content)
         except Exception:
-            return Extraction.model_validate(coerce_json(content))
+            obj, repaired = coerce_json_ex(content)
+            self.last_truncated = self.last_truncated or repaired
+            return Extraction.model_validate(obj)

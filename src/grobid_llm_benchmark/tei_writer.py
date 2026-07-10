@@ -35,6 +35,27 @@ def _clean(text: str) -> str:
     return _ILLEGAL_XML.sub("", text)
 
 
+# The gold @from holds a single first-page number; models sometimes return a range
+# ("123-145") or "pp. 123". Keep only the leading page token so strict page matching works.
+_FIRST_PAGE = re.compile(r"\d+[A-Za-z]?|[A-Za-z]?\d+")
+
+
+def _first_page(value: str) -> str:
+    m = _FIRST_PAGE.search(value)
+    return m.group(0) if m else value.strip()
+
+
+# Gold figure/table structures carry only the *label* ("Figure 1", "Table 2"), but a VLM
+# often returns the whole caption. When the string is longer than a bare label, reduce it
+# to the leading "Fig(ure)? N" / "Table N" token; otherwise keep it as-is.
+_LABEL = re.compile(r"^\s*((?:fig(?:ure|s?\.?)?|table|tab\.?|scheme|plate)\s*[0-9IVXLC]+)", re.I)
+
+
+def _label_only(caption: str) -> str:
+    m = _LABEL.match(caption)
+    return m.group(1).strip() if m else caption.strip()
+
+
 def _el(parent, tag, text=None, **attrs):
     e = etree.SubElement(parent, f"{{{TEI_NS}}}{tag}", nsmap=None)
     for k, v in attrs.items():
@@ -57,9 +78,11 @@ def _pers_name(author_parent, author: Author):
 
 def _add_reference(list_bibl, idx: int, ref: Reference):
     bibl = _el(list_bibl, "biblStruct")
+    # GROBID emits xml:id on biblStruct, but its evaluator resolves the citation id via the
+    # unprefixed relative XPath "@id" (FieldSpecification citationIdField / grobidBibReferenceId).
+    # Whether "@id" matches "xml:id" depends on the XPath engine's namespace handling, so we set
+    # both: xml:id mirrors GROBID's output, plain id guarantees the evaluator's "@id" resolves.
     bibl.set("{http://www.w3.org/XML/1998/namespace}id", f"b{idx}")
-    # NOTE: the evaluator reads the citation id via the relative XPath "@id", so we also
-    # set a plain id attribute to be safe across parser namespace handling.
     bibl.set("id", f"b{idx}")
 
     analytic = _el(bibl, "analytic")
@@ -81,7 +104,7 @@ def _add_reference(list_bibl, idx: int, ref: Reference):
     if ref.issue:
         _el(imprint, "biblScope", ref.issue, unit="issue")
     if ref.first_page:
-        _el(imprint, "biblScope", None, unit="page", **{"from": ref.first_page})
+        _el(imprint, "biblScope", None, unit="page", **{"from": _first_page(ref.first_page)})
     if ref.date:
         _el(imprint, "date", ref.date, type="published", when=ref.date)
 
@@ -102,13 +125,16 @@ def _build_body(body_el, body: Body) -> None:
     for caption in body.figure_titles:
         if caption and caption.strip():
             fig = _el(body_el, "figure")
-            _el(fig, "head", caption)
+            _el(fig, "head", _label_only(caption))
 
     for caption in body.table_titles:
         if caption and caption.strip():
             fig = _el(body_el, "figure", type="table")
-            _el(fig, "head", caption)
+            _el(fig, "head", _label_only(caption))
 
+    # Call-out markers carry no @target: the LLM extracts marker text but not which
+    # biblStruct each resolves to, so citation-context linkage (a separate "Citation context
+    # resolution" block, not part of the scored Citation-metadata F1) is out of scope here.
     markers = (
         [("bibr", m) for m in body.citation_markers]
         + [("figure", m) for m in body.figure_markers]
