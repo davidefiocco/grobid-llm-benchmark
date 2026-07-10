@@ -1,0 +1,30 @@
+grobid-llm-benchmark
+Copyright (c) 2026 Davide Fiocco
+
+This product is licensed under the MIT License (see LICENSE) and includes or
+derives from third-party components distributed under the Apache License 2.0.
+
+-------------------------------------------------------------------------------
+GROBID  (https://github.com/kermitt2/grobid)
+Copyright 2008-present  The GROBID contributors
+Licensed under the Apache License, Version 2.0.
+
+  This repository does not vendor GROBID's source. The harness image
+  (deploy/Dockerfile.harness) fetches GROBID at a pinned commit at build time
+  and applies deploy/patches/llm-eval.patch, which adds a `jatsEvalLLM` scoring
+  task to GROBID's grobid-trainer. That patch is a modification of GROBID source
+  files and remains under the Apache License 2.0 (see deploy/patches/README.md
+  and deploy/patches/LICENSE.grobid).
+
+-------------------------------------------------------------------------------
+biblio-glutton  (https://github.com/kermitt2/biblio-glutton)
+Copyright  The biblio-glutton contributors
+Licensed under the Apache License, Version 2.0.
+
+  This repository does not vendor biblio-glutton's source. The optional
+  `glutton-local` deploy profile builds it from source (see README > Consolidation).
+
+-------------------------------------------------------------------------------
+"GROBID" is a name used here only descriptively, to identify the tool this
+harness benchmarks against and whose TEI schema it targets. This project is not
+affiliated with, nor endorsed by, the GROBID project.

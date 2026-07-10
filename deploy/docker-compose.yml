@@ -1,0 +1,141 @@
+# GROBID-vs-LLM benchmark stack.
+#
+# Profiles:
+#   (default)        grobid (crf-lite) + harness            -> boots on any arch
+#   dl-parity        grobid full DL image (amd64, optional GPU) for published-parity
+#   glutton-local    local biblio-glutton + elasticsearch    -> offline reference matching
+#   ollama           local Ollama for an offline LLM backend
+#
+# Consolidation is driven by GLUTTON_URL (defaults to the local glutton service). Set it
+# to the public cloud glutton for a quick smoke test without the ~300GB local DB.
+
+services:
+  grobid:
+    image: ${GROBID_IMAGE:-grobid/grobid:0.9.0-crf}
+    profiles: ["", "default", "crf-lite"]
+    ports:
+      - "8070:8070"
+    volumes:
+      - ./config/grobid.entrypoint.sh:/opt/grobid/benchmark-entrypoint.sh:ro
+    environment:
+      - GLUTTON_URL=${GLUTTON_URL:-http://glutton:8080}
+    entrypoint: ["/bin/bash", "/opt/grobid/benchmark-entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8070/api/isalive"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+  grobid-dl:
+    image: ${GROBID_DL_IMAGE:-grobid/grobid:0.9.0-full}
+    profiles: ["dl-parity"]
+    ports:
+      - "8070:8070"
+    volumes:
+      - ./config/grobid.entrypoint.sh:/opt/grobid/benchmark-entrypoint.sh:ro
+    environment:
+      - GLUTTON_URL=${GLUTTON_URL:-http://glutton:8080}
+    entrypoint: ["/bin/bash", "/opt/grobid/benchmark-entrypoint.sh"]
+    # GPU is optional. On a GPU host, add the override file to enable it:
+    #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile dl-parity up
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8070/api/isalive"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+
+  harness:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.harness
+    depends_on:
+      grobid:
+        condition: service_healthy
+        required: false
+    environment:
+      - GROBID_URL=${GROBID_URL:-http://grobid:8070}
+      - GROBID_DIR=/opt/grobid
+      - BASELINE_ONLY=${BASELINE_ONLY:-1}
+      - LLM_BACKEND=${LLM_BACKEND:-azure}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o}
+      # Optional backend tag so multiple LLM runs coexist in the same data volume.
+      - LLM_TAG=${LLM_TAG:-}
+      - LLM_REPORT=${LLM_REPORT:-llm_report.md}
+      - DATASET=${DATASET:-PMC_sample_1943}
+      - N_ARTICLES=${N_ARTICLES:-1943}
+      # GROBID's published benchmark flow: consolidateHeader=1, consolidateCitations=0.
+      - CONSOLIDATE_HEADER=${CONSOLIDATE_HEADER:-1}
+      - CONSOLIDATE_CITATIONS=${CONSOLIDATE_CITATIONS:-0}
+      # glutton for consolidation (header for both tools by default; also used by the LLM path).
+      - GLUTTON_URL=${GLUTTON_URL:-}
+      # LLM-side consolidation; defaults mirror GROBID's flags above for a symmetric comparison.
+      - LLM_CONSOLIDATE_HEADER=${LLM_CONSOLIDATE_HEADER:-}
+      - LLM_CONSOLIDATE_CITATIONS=${LLM_CONSOLIDATE_CITATIONS:-}
+      # Azure OpenAI (only used when BASELINE_ONLY=0 and LLM_BACKEND=azure).
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-10-21}
+      # Generic OpenAI-compatible (LLM_BACKEND=openai).
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-}
+    volumes:
+      - ./data:/opt/harness/data
+      - ./reports:/opt/harness/reports
+
+  # In-container test runner: exercises the offline suite plus the Java scorer smoke test
+  # against the image's own JDK + built grobid-trainer (no host JDK needed).
+  #   docker compose --profile test run --rm test
+  test:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.harness
+    profiles: ["test"]
+    environment:
+      - GROBID_DIR=/opt/grobid
+    entrypoint: ["poetry", "run", "pytest", "-m", "offline or docker", "-v"]
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    profiles: ["glutton-local"]
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms4g -Xmx4g}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      # Prebuilt ES data directory from the biblio-glutton HF bundle (chowned to uid 1000).
+      - ${GLUTTON_INDEX_DIR:-./glutton/index}:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+
+  # biblio-glutton lookup service. There is no published image, so we run the shadow ("onejar")
+  # jar built from source (kermitt2/biblio-glutton, 0.3-SNAPSHOT) on a stock Temurin JRE, with the
+  # jar, config and LMDB stores bind-mounted in. Config points at the elasticsearch + grobid
+  # services by name (see deploy/glutton/glutton.yml).
+  glutton:
+    image: ${GLUTTON_RUNTIME_IMAGE:-eclipse-temurin:11-jre}
+    profiles: ["glutton-local"]
+    depends_on:
+      - elasticsearch
+    working_dir: /opt/glutton
+    command: ["java", "-jar", "/opt/glutton/lookup-service.jar", "server", "/opt/glutton/config/glutton.yml"]
+    volumes:
+      - ${GLUTTON_JAR:-./glutton/lookup-service.jar}:/opt/glutton/lookup-service.jar:ro
+      - ${GLUTTON_CONFIG:-./glutton/glutton.yml}:/opt/glutton/config/glutton.yml:ro
+      - ${GLUTTON_DB_DIR:-./glutton/data/db}:/opt/glutton/data/db
+    ports:
+      - "8080:8080"
+
+volumes:
+  ollama:

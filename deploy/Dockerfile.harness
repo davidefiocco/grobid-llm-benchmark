@@ -1,0 +1,60 @@
+# Harness + scorer image.
+#
+# Contains the Python benchmark CLI (glb) and a JDK + the patched grobid-trainer build so
+# scoring runs self-contained: `jatsEval -Prun=0` scores GROBID's *.fulltext.tei.xml and
+# `jatsEvalLLM` scores the LLM's *.fulltext.llm.tei.xml, both against the gold NLM. GROBID
+# PDF processing itself is delegated to the separate `grobid` service (which owns models),
+# so this image needs no DeLFT/TensorFlow.
+
+# ---- stage 1: build the patched grobid-trainer ----
+FROM eclipse-temurin:21.0.10_7-jdk AS grobid-builder
+
+ARG GROBID_COMMIT=fc82a7313681efd584311b4058145778f2a97ee3
+RUN apt-get update && apt-get install -y --no-install-recommends git unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/grobid
+# Shallow single-commit fetch: far less data than a full clone, and resilient to flaky
+# networks (retries the fetch a few times before giving up).
+RUN git init -q && \
+    git remote add origin https://github.com/kermitt2/grobid.git && \
+    for i in 1 2 3 4 5; do \
+        git fetch --depth 1 origin "$GROBID_COMMIT" && break || sleep 10; \
+    done && \
+    git checkout -q FETCH_HEAD
+
+COPY deploy/patches/llm-eval.patch /opt/grobid/llm-eval.patch
+RUN git apply llm-eval.patch
+
+# Build the trainer + its runtime classpath. Installs a local dist we can run with gradle.
+RUN ./gradlew :grobid-trainer:assemble --no-daemon --stacktrace
+
+# ---- stage 2: harness runtime ----
+# A JDK (not just a JRE) so `./gradlew jatsEval*` can recompile classes when scoring.
+FROM eclipse-temurin:21.0.10_7-jdk
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-venv python3-pip git curl && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV POETRY_VERSION=1.8.3 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    PATH="/root/.local/bin:${PATH}"
+RUN curl -sSL https://install.python-poetry.org | python3 -
+
+WORKDIR /opt/grobid
+COPY --from=grobid-builder /opt/grobid /opt/grobid
+
+WORKDIR /opt/harness
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --no-root
+COPY src ./src
+COPY tests ./tests
+COPY README.md ./
+RUN poetry install
+
+COPY deploy/run_benchmark.sh /usr/local/bin/run_benchmark.sh
+RUN chmod +x /usr/local/bin/run_benchmark.sh
+
+ENV GROBID_DIR=/opt/grobid
+ENTRYPOINT ["/usr/local/bin/run_benchmark.sh"]

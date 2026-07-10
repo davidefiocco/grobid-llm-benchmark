@@ -1,0 +1,11 @@
+# GPU override for the dl-parity profile. Requires the NVIDIA container runtime on the host.
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile dl-parity up
+services:
+  grobid-dl:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]

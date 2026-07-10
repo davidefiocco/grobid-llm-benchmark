@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# datasets and generated artifacts (large; kept out of git)
+data/
+smoke_data/
+*.pdf
+*.nxml
+*.fulltext.tei.xml
+*.fulltext.llm.tei.xml
+reports/
+
+# OS files
+.DS_Store
+
+# ...but keep the tiny committed test fixtures
+!tests/fixtures/
+!tests/fixtures/**
+
+# deployment: local secrets and the heavy glutton volume
+deploy/.env
+deploy/glutton/

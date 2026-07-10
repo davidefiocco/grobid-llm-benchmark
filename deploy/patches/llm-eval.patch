@@ -1,0 +1,219 @@
+diff --git a/build.gradle b/build.gradle
+index 1b1a117..dbed84d 100644
+--- a/build.gradle
++++ b/build.gradle
+@@ -681,6 +681,26 @@ project(":grobid-trainer") {
+         systemProperty "grobid.progressbar", getArg('progressbar', 'auto')
+     }
+ 
++    // Score a pre-produced set of "*.fulltext.llm.tei.xml" files (from an external LLM
++    // tool, e.g. grobid-llm-benchmark) against the JATS/NLM gold, using GROBID's exact
++    // evaluation logic so the numbers are directly comparable. Does NOT run GROBID.
++    // Override the TEI suffix to score a specific backend's output when several coexist:
++    // ./gradlew jatsEvalLLM -Pp2t=/path/to/goldenSet -Pllmsuffix=.fulltext.llm.azure.tei.xml
++    task(jatsEvalLLM, dependsOn: 'classes', type: JavaExec, group: 'modelevaluation') {
++        mainClass = 'org.grobid.trainer.evaluation.EndToEndEvaluation'
++        classpath = sourceSets.main.runtimeClasspath
++        args 'nlm', getArg('p2t', '.'), '0', getArg('fileRatio', '1.0'), getArg('flavor', ''), 'llm'
++        def javaLibraryPath = getJavaLibraryPath()
++        if (JavaVersion.current().compareTo(JavaVersion.VERSION_1_8) > 0) {
++            jvmArgs '-Xmx3072m', "--add-opens", "java.base/java.lang=ALL-UNNAMED"
++        } else {
++            jvmArgs '-Xmx3072m'
++        }
++        systemProperty "java.library.path", "${javaLibraryPath}"
++        systemProperty "grobid.progressbar", getArg('progressbar', 'auto')
++        systemProperty "grobid.llm.tei.suffix", getArg('llmsuffix', '.fulltext.llm.tei.xml')
++    }
++
+     task(teiEval, dependsOn: 'classes', type: JavaExec, group: 'modelevaluation') {
+         mainClass = 'org.grobid.trainer.evaluation.EndToEndEvaluation'
+         classpath = sourceSets.main.runtimeClasspath
+diff --git a/grobid-trainer/src/main/java/org/grobid/trainer/evaluation/EndToEndEvaluation.java b/grobid-trainer/src/main/java/org/grobid/trainer/evaluation/EndToEndEvaluation.java
+index d728c21..9ad089f 100644
+--- a/grobid-trainer/src/main/java/org/grobid/trainer/evaluation/EndToEndEvaluation.java
++++ b/grobid-trainer/src/main/java/org/grobid/trainer/evaluation/EndToEndEvaluation.java
+@@ -74,6 +74,14 @@ public class EndToEndEvaluation {
+     public static final int GROBID = 0;
+     public static final int PDFX = 1;
+     public static final int CERMINE = 2;
++    // LLM: an external multimodal LLM tool that emits GROBID-schema TEI as
++    // "*.fulltext.llm.tei.xml" next to each PDF, so it is scored by the exact same
++    // grobidPath XPaths / matching logic as GROBID. See doc/End-to-end-evaluation.md
++    // and grobid-llm-benchmark (issue #1146).
++    public static final int LLM = 3;
++
++    // file suffix produced by the external LLM tool for its TEI output
++    public static final String LLM_TEI_SUFFIX = ".fulltext.llm.tei.xml";
+ 
+     public static final int HEADER = 0;
+     public static final int CITATION = 1;
+@@ -353,26 +361,38 @@ public class EndToEndEvaluation {
+                 Document gold = docBuilder.parse(goldFile);
+ 
+                 // get the results of the evaluated tool for this file
+-                if (runType == GROBID) {
++                // GROBID and LLM share the same code path: both are scored against the
++                // GROBID-schema TEI (grobidPath XPaths). They only differ by the output
++                // file suffix they read (LLM emits "*.fulltext.llm.tei.xml").
++                if (runType == GROBID || runType == LLM) {
+                     final String fileSuffix;
+-                    if (flavor != null) {
++                    if (runType == LLM) {
++                        // suffix is overridable (-Pllmsuffix) so several backends' TEI
++                        // (e.g. *.fulltext.llm.azure.tei.xml) can coexist and be scored
++                        // one at a time; defaults to the canonical LLM suffix.
++                        fileSuffix = System.getProperty("grobid.llm.tei.suffix", LLM_TEI_SUFFIX);
++                    } else if (flavor != null) {
+                         fileSuffix = ".fulltext." + flavor.getPlainLabel() + ".tei.xml";
+                     } else {
+                         fileSuffix = ".fulltext.tei.xml";
+                     }
+ 
+-                    // results are produced in a TEI file
+-                    File[] refFiles3 = dir.listFiles((dir1, name) -> name.endsWith(fileSuffix));
++                    // results are produced in a TEI file. For the LLM run type make sure
++                    // we do not accidentally pick up GROBID's own ".fulltext.tei.xml".
++                    File[] refFiles3 = dir.listFiles((dir1, name) ->
++                            name.endsWith(fileSuffix)
++                                    && (runType != GROBID || !name.endsWith(LLM_TEI_SUFFIX)));
+ 
+                     if ((refFiles3 == null) || (refFiles3.length == 0)) {
+-                        LOGGER.warn("No Grobid TEI file found under {}", dir.getPath());
++                        LOGGER.warn("No {} TEI file found under {}",
++                                runType == LLM ? "LLM" : "Grobid", dir.getPath());
+                         return null;
+                     }
+ 
+                     if (refFiles3.length != 1) {
+                         LOGGER.warn(
+-                                "More than one Grobid TEI file found under {}, processing only the first one",
+-                                dir.getPath());
++                                "More than one {} TEI file found under {}, processing only the first one",
++                                runType == LLM ? "LLM" : "Grobid", dir.getPath());
+                     }
+ 
+                     File teiFile = refFiles3[0];
+@@ -947,8 +964,9 @@ public class EndToEndEvaluation {
+                             }
+                         }
+ 
+-                        // reference context matching
+-                        if ((sectionType == CITATION) && (runType == GROBID)) {
++                        // reference context matching (also runs for LLM: it uses the same
++                        // grobidPath-based ref markers; absent markers simply yield no matches)
++                        if ((sectionType == CITATION) && (runType == GROBID || runType == LLM)) {
+                             // list of identifiers present in the bibliographical references
+                             List<String> refBibRefIds = new ArrayList<>();
+                             List<String> grobidBibRefIds = new ArrayList<>();
+@@ -1776,6 +1794,53 @@ public class EndToEndEvaluation {
+         return report.toString();
+     }
+ 
++    /**
++     * Evaluate an external LLM tool. The LLM must have already produced, next to each
++     * article PDF, a GROBID-schema TEI file with suffix {@link #LLM_TEI_SUFFIX}
++     * ("*.fulltext.llm.tei.xml"). This method never runs GROBID; it only scores the
++     * pre-produced LLM TEI, reusing the exact same field XPaths and matching logic as
++     * the GROBID evaluation so the numbers are directly comparable. See issue #1146.
++     */
++    public String evaluationLLM(StringBuilder reportMD) throws Exception {
++        if (xmlInputPath == null) {
++            throw new GrobidResourceException("Path to evaluation (gold) XML data is not correctly set");
++        }
++
++        // text report for console
++        StringBuilder report = new StringBuilder();
++
++        long start = System.currentTimeMillis();
++
++        if (CollectionUtils.isNotEmpty(headerFields)) {
++            report.append("\n======= Header metadata ======= \n");
++            reportMD.append("\n## Header metadata \n");
++            report.append(evaluationRun(LLM, HEADER, reportMD));
++        }
++
++        if (CollectionUtils.isNotEmpty(citationsFields)) {
++            report.append("\n======= Citation metadata ======= \n");
++            reportMD.append("\n## Citation metadata \n");
++            report.append(evaluationRun(LLM, CITATION, reportMD));
++        }
++
++        if (CollectionUtils.isNotEmpty(fulltextFields)) {
++            report.append("\n======= Fulltext structures ======= \n");
++            reportMD.append("\n## Fulltext structures \n\n");
++            report.append(evaluationRun(LLM, FULLTEXT, reportMD));
++        }
++
++        System.out.println(
++                "Evaluation metrics produced in "
++                        + (System.currentTimeMillis() - start) / (1000.00)
++                        + " seconds");
++        reportMD.append(
++                "Evaluation metrics produced in "
++                        + (System.currentTimeMillis() - start) / (1000.00)
++                        + " seconds\n");
++
++        return report.toString();
++    }
++
+     /**
+      * This method removes the fields from the evaluation specifications and labels
+      * NOTE: This modifies the fieldSpecification and labelSpecification lists
+@@ -1809,7 +1874,8 @@ public class EndToEndEvaluation {
+     }
+ 
+     private String evaluationRun(int runType, int sectionType, StringBuilder reportMD) {
+-        if ((runType != this.GROBID) && (runType != this.PDFX) && (runType != this.CERMINE)) {
++        if ((runType != this.GROBID) && (runType != this.PDFX)
++                && (runType != this.CERMINE) && (runType != this.LLM)) {
+             throw new GrobidException("The run type is not valid for evaluation: " + runType);
+         }
+         if ((sectionType != this.HEADER) && (sectionType != this.CITATION) && (sectionType != this.FULLTEXT)) {
+@@ -2295,9 +2361,9 @@ public class EndToEndEvaluation {
+         //DOMConfigurator is called to force logger to use the xml configuration file
+         //DOMConfigurator.configure("src/main/resources/log4j.xml");
+ 
+-        if (args.length > 5 || args.length == 0) {
++        if (args.length > 6 || args.length == 0) {
+             System.err
+-                    .println("usage: command [path to the (gold) evaluation XML dataset] Run[0|1] fileRatio[0.0-1.0]");
++                    .println("usage: command inputType[nlm|tei] [path to the (gold) evaluation XML dataset] Run[0|1] fileRatio[0.0-1.0] flavor tool[grobid|llm]");
+             return;
+         }
+ 
+@@ -2349,6 +2415,20 @@ public class EndToEndEvaluation {
+             }
+         }
+ 
++        // optional tool selector: "grobid" (default) runs and/or scores GROBID;
++        // "llm" scores pre-produced "*.fulltext.llm.tei.xml" files (issue #1146).
++        String tool = "grobid";
++        if (args.length > 5) {
++            String toolArg = args[5];
++            if (StringUtils.isNotBlank(toolArg)) {
++                tool = toolArg.trim().toLowerCase();
++            }
++        }
++        if (!tool.equals("grobid") && !tool.equals("llm")) {
++            System.err.println("Invalid value for tool argument, should be [grobid|llm]");
++            return;
++        }
++
+         try {
+             File xmlPath = new File(xmlInputPath);
+             if (!xmlPath.exists()) {
+@@ -2370,7 +2450,12 @@ public class EndToEndEvaluation {
+             // markdown report
+             StringBuilder reportMD = new StringBuilder();
+ 
+-            String report = eval.evaluationGrobid(runGrobidVal, reportMD);
++            String report;
++            if (tool.equals("llm")) {
++                report = eval.evaluationLLM(reportMD);
++            } else {
++                report = eval.evaluationGrobid(runGrobidVal, reportMD);
++            }
+ 
+             System.out.println(report);
+             System.out.println(new CntManagerReportRepresentation().getRepresentation(Engine.getCntManager()));
